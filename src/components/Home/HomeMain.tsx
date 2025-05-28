@@ -313,7 +313,7 @@ function Roadmap() {
   ];
 
   return (
-    <section className="bg-[#2c5241] py-24" id='roadmap'>
+    <section className="bg-[#2c5241] py-24" id="roadmap">
       <div className="max-w-7xl mx-auto px-4">
         <h2 className="text-4xl md:text-5xl font-bold text-white text-center mb-16">
           Blocks-DApps Mainnet's Roadmap
@@ -385,11 +385,11 @@ const faqs = [
 ];
 
 const FAQSection = () => {
-const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
- const toggleFAQ = (index: number) => {
-   setActiveIndex(activeIndex === index ? null : index);
- };
+  const toggleFAQ = (index: number) => {
+    setActiveIndex(activeIndex === index ? null : index);
+  };
 
   return (
     <div className="mt-4 pb-8 bg-[#2c5241]" id="faq">
@@ -431,7 +431,5 @@ const [activeIndex, setActiveIndex] = useState<number | null>(null);
     </div>
   );
 };
-
-
 
 export default Home;
